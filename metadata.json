@@ -1,0 +1,8 @@
+{
+  "name": "NASA Akademiyasi",
+  "description": "Koinot haqida nazariy ma'lumotlar va interaktiv quizlar platformasi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
