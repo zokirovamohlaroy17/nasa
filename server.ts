@@ -101,12 +101,17 @@ function httpsGet(url: string): Promise<any> {
 
 // Robust JSON cleaner to parse responses wrapped in markdown blocks
 function safeParseJson(text: string): any {
-  let cleaned = text.trim();
-  const jsonMatch = cleaned.match(/```json\s*([\s\S]*?)\s*```/) || cleaned.match(/```\s*([\s\S]*?)\s*```/);
-  if (jsonMatch) {
-    cleaned = jsonMatch[1].trim();
+  try {
+    let cleaned = text.trim();
+    const jsonMatch = cleaned.match(/```json\s*([\s\S]*?)\s*```/) || cleaned.match(/```\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      cleaned = jsonMatch[1].trim();
+    }
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.warn("JSON parsing failed, returning null:", e);
+    return null;
   }
-  return JSON.parse(cleaned);
 }
 
 async function startServer() {
@@ -121,132 +126,88 @@ async function startServer() {
     let liveNews = [ ...FALLBACK_NEWS ];
     let status = "live";
 
-    // 1. Fetch APOD using NASA public key via ultra-reliable httpsGet
     try {
-      const json = await httpsGet("https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY");
-      if (json && json.url) {
-        apodData = {
-          title: json.title || FALLBACK_APOD.title,
-          explanation: json.explanation || FALLBACK_APOD.explanation,
-          url: json.url,
-          hdurl: json.hdurl || json.url,
-          date: json.date || FALLBACK_APOD.date
-        };
-      }
-    } catch (err) {
-      console.warn("NASA APOD live API failed/rate-limited, using fallback:", err);
-      status = "fallback-apod";
-    }
-
-    // 2. Translate/localize NASA content and fetch live search space news using Gemini
-    const ai = getGemini();
-    if (ai) {
-      // Step A: Translate APOD explanation to Uzbek
-      if (apodData.explanation !== FALLBACK_APOD.explanation) {
-        try {
-          const translateResponse = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: `Translate the following NASA Astronomy Picture of the Day details into inspiring, natural, and scientifically accurate Uzbek language for students of the NASA Academy.
-            Title: ${apodData.title}
-            Explanation: ${apodData.explanation}
-            
-            Return JSON matching this schema:
-            {
-              "title": "translated title in Uzbek",
-              "explanation": "translated explanation in Uzbek"
-            }`,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  explanation: { type: Type.STRING }
-                },
-                required: ["title", "explanation"]
-              }
-            }
-          });
-          
-          if (translateResponse.text) {
-            const parsed = safeParseJson(translateResponse.text);
-            if (parsed && parsed.title) {
-              apodData.title = parsed.title;
-              apodData.explanation = parsed.explanation;
-            }
-          }
-        } catch (err) {
-          console.error("APOD Uzbek translation failed:", err);
-        }
-      }
-
-      // Step B: Search for live NASA news using Search grounding index (with dual-tier resilient fallback)
-      const newsPrompt = `Search for the absolute latest NASA news and notable space discoveries from official nasa.gov or space.com.
-      Compile exactly 3 of the most exciting recent news articles from this month. Write the response entirely in natural Uzbek language.
-      
-      Return the list as a JSON array matching this schema:
-      [
-        {
-          "title": "Title of the news in Uzbek",
-          "summary": "Detailed summary in Uzbek (at least 3 descriptive sentences detailing the science)",
-          "sourceUrl": "Official nasa.gov news link or space.com URL",
-          "date": "2026-05-31",
-          "category": "Mars, Teleskoplar, Artemis, Asteroidlar, etc."
-        }
-      ]`;
-
+      // 1. Fetch APOD using NASA public key via ultra-reliable httpsGet
       try {
-        console.log("Attempting live news generation with Google Search Grounding...");
-        const newsResponse = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: newsPrompt,
-          config: {
-            tools: [{ googleSearch: {} }],
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  summary: { type: Type.STRING },
-                  sourceUrl: { type: Type.STRING },
-                  date: { type: Type.STRING },
-                  category: { type: Type.STRING }
-                },
-                required: ["title", "summary", "sourceUrl", "date", "category"]
+        const json = await httpsGet("https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY");
+        if (json && json.url) {
+          apodData = {
+            title: json.title || FALLBACK_APOD.title,
+            explanation: json.explanation || FALLBACK_APOD.explanation,
+            url: json.url,
+            hdurl: json.hdurl || json.url,
+            date: json.date || FALLBACK_APOD.date
+          };
+        }
+      } catch (err) {
+        console.warn("NASA APOD live API failed/rate-limited, using fallback:", err);
+        status = "fallback-apod";
+      }
+
+      // 2. Translate/localize NASA content and fetch live search space news using Gemini
+      const ai = getGemini();
+      if (ai) {
+        // Step A: Translate APOD explanation to Uzbek
+        if (apodData.explanation !== FALLBACK_APOD.explanation) {
+          try {
+            const translateResponse = await ai.models.generateContent({
+              model: "gemini-3.5-flash",
+              contents: `Translate the following NASA Astronomy Picture of the Day details into inspiring, natural, and scientifically accurate Uzbek language for students of the NASA Academy.
+              Title: ${apodData.title}
+              Explanation: ${apodData.explanation}
+              
+              Return JSON matching this schema:
+              {
+                "title": "translated title in Uzbek",
+                "explanation": "translated explanation in Uzbek"
+              }`,
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    explanation: { type: Type.STRING }
+                  },
+                  required: ["title", "explanation"]
+                }
+              }
+            });
+            
+            if (translateResponse.text) {
+              const parsed = safeParseJson(translateResponse.text);
+              if (parsed && parsed.title) {
+                apodData.title = parsed.title;
+                apodData.explanation = parsed.explanation;
               }
             }
-          }
-        });
-
-        if (newsResponse.text) {
-          const parsed = safeParseJson(newsResponse.text);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            liveNews = parsed;
-            console.log("Successfully retrieved news via live search grounding.");
+          } catch (err: any) {
+            console.error("APOD Uzbek translation failed:", err.message || err);
           }
         }
-      } catch (searchErr: any) {
-        console.warn("Google Search Grounding failed/rate-limited. Attempting Tier 2 fallback (Standard Cosmic AI Generation)...", searchErr.message || searchErr);
+
+        // Step B: Search for live NASA news using Search grounding index (with dual-tier resilient fallback)
+        const newsPrompt = `Search for the absolute latest NASA news and notable space discoveries from official nasa.gov or space.com.
+        Compile exactly 3 of the most exciting recent news articles from this month. Write the response entirely in natural Uzbek language.
         
+        Return the list as a JSON array matching this schema:
+        [
+          {
+            "title": "Title of the news in Uzbek",
+            "summary": "Detailed summary in Uzbek (at least 3 descriptive sentences detailing the science)",
+            "sourceUrl": "Official nasa.gov news link or space.com URL",
+            "date": "2026-05-31",
+            "category": "Mars, Teleskoplar, Artemis, Asteroidlar, etc."
+          }
+        ]`;
+
         try {
-          // Tier 2 Fallback: Generate high-quality simulated/historically correct news based on Gemini's base knowledge (much higher rate limits, no premium tool needed)
-          const backupResponse = await ai.models.generateContent({
+          console.log("Attempting live news generation with Google Search Grounding...");
+          const newsResponse = await ai.models.generateContent({
             model: "gemini-3.5-flash",
-            contents: `Generate 3 completely authentic-sounding, highly interesting and educational recent NASA news articles (for example, about James Webb, Perseverance Mars rover, and Artemis lunar missions). Write them entirely in natural, beautiful Uzbek language for students of NASA Academy.
-            
-            Return the list as a JSON array matching this schema:
-            [
-              {
-                "title": "Title of the news in Uzbek",
-                "summary": "Detailed summary in Uzbek (at least 3 descriptive sentences detailing the science)",
-                "sourceUrl": "Official nasa.gov news link or space.com URL",
-                "date": "2026-05-31",
-                "category": "Mars, Teleskoplar, Artemis, Asteroidlar, etc."
-              }
-            ]`,
+            contents: newsPrompt,
             config: {
+              tools: [{ googleSearch: {} }],
               responseMimeType: "application/json",
               responseSchema: {
                 type: Type.ARRAY,
@@ -265,22 +226,71 @@ async function startServer() {
             }
           });
 
-          if (backupResponse.text) {
-            const parsed = safeParseJson(backupResponse.text);
+          if (newsResponse.text) {
+            const parsed = safeParseJson(newsResponse.text);
             if (Array.isArray(parsed) && parsed.length > 0) {
               liveNews = parsed;
-              console.log("Successfully retrieved news via standard model space knowledge.");
-              if (status === "live") status = "standard-ai";
+              console.log("Successfully retrieved news via live search grounding.");
             }
           }
-        } catch (backupErr: any) {
-          console.error("Standard model generation failed as well, falling back to static offline news:", backupErr.message || backupErr);
-          if (status === "live") status = "fallback-news";
+        } catch (searchErr: any) {
+          console.warn("Google Search Grounding failed/rate-limited. Attempting Tier 2 fallback (Standard Cosmic AI Generation)...");
+          
+          try {
+            // Tier 2 Fallback: Generate high-quality simulated/historically correct news based on Gemini's base knowledge (much higher rate limits, no premium tool needed)
+            const backupResponse = await ai.models.generateContent({
+              model: "gemini-3.5-flash",
+              contents: `Generate 3 completely authentic-sounding, highly interesting and educational recent NASA news articles (for example, about James Webb, Perseverance Mars rover, and Artemis lunar missions). Write them entirely in natural, beautiful Uzbek language for students of NASA Academy.
+              
+              Return the list as a JSON array matching this schema:
+              [
+                {
+                  "title": "Title of the news in Uzbek",
+                  "summary": "Detailed summary in Uzbek (at least 3 descriptive sentences detailing the science)",
+                  "sourceUrl": "Official nasa.gov news link or space.com URL",
+                  "date": "2026-05-31",
+                  "category": "Mars, Teleskoplar, Artemis, Asteroidlar, etc."
+                }
+              ]`,
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING },
+                      summary: { type: Type.STRING },
+                      sourceUrl: { type: Type.STRING },
+                      date: { type: Type.STRING },
+                      category: { type: Type.STRING }
+                    },
+                    required: ["title", "summary", "sourceUrl", "date", "category"]
+                  }
+                }
+              }
+            });
+
+            if (backupResponse.text) {
+              const parsed = safeParseJson(backupResponse.text);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                liveNews = parsed;
+                console.log("Successfully retrieved news via standard model space knowledge.");
+                if (status === "live") status = "standard-ai";
+              }
+            }
+          } catch (backupErr: any) {
+            console.error("Standard model generation failed as well, falling back to static offline news:", backupErr.message || backupErr);
+            if (status === "live") status = "fallback-news";
+          }
         }
+      } else {
+        console.info("Gemini offline. Using premium offline news array.");
+        status = "offline-all";
       }
-    } else {
-      console.info("Gemini offline. Using premium offline news array.");
-      status = "offline-all";
+    } catch (globalErr: any) {
+      console.error("Critical error in /api/nasa/data main block, falling back to all-static payload:", globalErr.message || globalErr);
+      status = "critical-error-fallback";
     }
 
     res.json({
