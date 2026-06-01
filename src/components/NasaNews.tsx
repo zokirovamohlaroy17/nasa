@@ -40,11 +40,12 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
 
   const isDark = theme === 'dark';
 
-  const fetchNasaData = async () => {
+  const fetchNasaData = async (isManual = false) => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch("/api/nasa/data");
+      const url = isManual ? "/api/nasa/data?force=true" : "/api/nasa/data";
+      const res = await fetch(url);
       if (!res.ok) {
         throw new Error("NASA ma'lumotlarini yuklashda xatolik yuz berdi");
       }
@@ -59,7 +60,7 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
   };
 
   useEffect(() => {
-    fetchNasaData();
+    fetchNasaData(false);
   }, []);
 
   const handleClaimPoints = () => {
@@ -93,7 +94,7 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
     return (
       <div className="bg-red-500/10 border border-red-500/30 p-8 rounded-2xl text-center mb-12">
         <p className="text-red-400 font-medium mb-4">Ma'lumot olishda xatolik: {error || "Sinxronizatsiya muvaffaqiyatsiz"}</p>
-        <button onClick={fetchNasaData} className="cyber-button px-6 py-2 bg-slate-800 text-white text-xs">
+        <button onClick={() => fetchNasaData(true)} className="cyber-button px-6 py-2 bg-slate-800 text-white text-xs">
           Qaytadan urinish
         </button>
       </div>
@@ -119,7 +120,7 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={fetchNasaData}
+            onClick={() => fetchNasaData(true)}
             className={cn(
               "flex items-center gap-2 px-4 py-2 text-xs font-mono uppercase tracking-wider rounded-lg transition-all border",
               isDark 

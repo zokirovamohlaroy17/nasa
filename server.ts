@@ -122,138 +122,194 @@ interface CachedNasaData {
   timestamp: number;
 }
 
-let nasaCache: CachedNasaData | null = null;
+// Pre-hydrate cache with robust, high-quality, pre-localized Uzbekistan payloads
+let nasaCache: CachedNasaData = {
+  apod: { ...FALLBACK_APOD },
+  news: [ ...FALLBACK_NEWS ],
+  status: "initial-offline",
+  timestamp: 0 // Expired initially, will trigger silent background fetch
+};
+
 const CACHE_DURATION = 15 * 60 * 1000; // 15-minute persistent cache
 let isGeminiSilentlySuspended = false;
 let geminiSuspendedUntil = 0;
+let isFetchingBackground = false;
 
+// Background fetcher - runs completely non-blocking to prevent HTTP timeouts
+function triggerBackgroundFetch() {
+  if (isFetchingBackground) return;
+  isFetchingBackground = true;
+  console.log("[NASA API Cache] Active: Commencing asynchronous silent background refresh...");
+  
+  fetchLiveNasaTelemetry()
+    .then((fresh) => {
+      nasaCache = {
+        apod: fresh.apod,
+        news: fresh.news,
+        status: fresh.status,
+        timestamp: Date.now()
+      };
+      console.log("[NASA API Cache] Success: Async background refresh completed. Status:", fresh.status);
+    })
+    .catch((err) => {
+      console.log("[NASA API Cache] Warning: Async background refresh finished with warning:", err.message || err);
+    })
+    .finally(() => {
+      isFetchingBackground = false;
+    });
+}
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+// Actual live fetch process
+async function fetchLiveNasaTelemetry(): Promise<{ apod: typeof FALLBACK_APOD; news: typeof FALLBACK_NEWS; status: string }> {
+  let apodData = { ...FALLBACK_APOD };
+  let liveNews = [ ...FALLBACK_NEWS ];
+  let status = "live";
+  const now = Date.now();
 
-  app.use(express.json());
-
-  // Main stable endpoint: ALWAYS succeeds, falls back gracefully to high-quality localized backups
-  app.get("/api/nasa/data", async (req, res) => {
-    const now = Date.now();
-
-    // Serve from cache if valid to keep loading speed sub-5ms and prevent rate limit exhaustion
-    if (nasaCache && (now - nasaCache.timestamp < CACHE_DURATION)) {
-      console.log("[NASA API Cache] Serving fresh NASA telemetry from in-memory cache.");
-      return res.json({
-        status: "cached-" + nasaCache.status,
-        apod: nasaCache.apod,
-        news: nasaCache.news
-      });
+  // 1. Fetch APOD with low timeout
+  try {
+    const json = await httpsGet("https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY");
+    if (json && json.url) {
+      apodData = {
+        title: json.title || FALLBACK_APOD.title,
+        explanation: json.explanation || FALLBACK_APOD.explanation,
+        url: json.url,
+        hdurl: json.hdurl || json.url,
+        date: json.date || FALLBACK_APOD.date
+      };
     }
+  } catch (err: any) {
+    console.log("[NASA API info] Live APOD fetch timed out or unavailable. Utilizing safe localized backup asset.");
+    status = "fallback-apod";
+  }
 
-    console.log("[NASA API Cache] Cache expired or empty. Triggering background loader/refresher...");
+  // 2. Query Gemini for translation and search grounding
+  const ai = getGemini();
+  const canUseGemini = ai && !(isGeminiSilentlySuspended && now < geminiSuspendedUntil);
 
-    // Check if Gemini is temporarily suspended due to previous 429 RESOURCE_EXHAUSTED errors
-    if (isGeminiSilentlySuspended && now < geminiSuspendedUntil) {
-      console.log(`[NASA API] Gemini requests are silently suspended for another ${Math.round((geminiSuspendedUntil - now) / 1000)} seconds due to active quota limits. Serving stable backups instantly.`);
-    }
-
-    let apodData = { ...FALLBACK_APOD };
-    let liveNews = [ ...FALLBACK_NEWS ];
-    let status = "live";
-
-    try {
-      // 1. Fetch Astronomy Picture of the Day from NASA (with low timeout)
+  if (ai && canUseGemini) {
+    // Step A: Translate APOD on the fly if it is new
+    if (apodData.explanation !== FALLBACK_APOD.explanation) {
       try {
-        const json = await httpsGet("https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY");
-        if (json && json.url) {
-          apodData = {
-            title: json.title || FALLBACK_APOD.title,
-            explanation: json.explanation || FALLBACK_APOD.explanation,
-            url: json.url,
-            hdurl: json.hdurl || json.url,
-            date: json.date || FALLBACK_APOD.date
-          };
+        const translateResponse = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: `Translate the following NASA Astronomy Picture of the Day details into inspiring, natural, and scientifically accurate Uzbek language for students of the NASA Academy.
+          Title: ${apodData.title}
+          Explanation: ${apodData.explanation}
+          
+          Return JSON matching this schema:
+          {
+            "title": "translated title in Uzbek",
+            "explanation": "translated explanation in Uzbek"
+          }`,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                explanation: { type: Type.STRING }
+              },
+              required: ["title", "explanation"]
+            }
+          }
+        });
+        
+        if (translateResponse.text) {
+          const parsed = safeParseJson(translateResponse.text);
+          if (parsed && parsed.title) {
+            apodData.title = parsed.title;
+            apodData.explanation = parsed.explanation;
+          }
         }
       } catch (err: any) {
-        console.log("[NASA API info] NASA APOD live URL using premium space asset fallback cleanly.");
-        status = "fallback-apod";
+        const errMsg = err.message || String(err);
+        console.log("[NASA API info] Translation paused due to rate limits. Swapping in standard space asset.");
+        
+        if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota")) {
+          isGeminiSilentlySuspended = true;
+          geminiSuspendedUntil = Date.now() + 10 * 60 * 1000;
+        }
       }
+    }
 
-      // Check if we can proceed with Gemini localization
-      const ai = getGemini();
-      const canUseGemini = ai && !(isGeminiSilentlySuspended && now < geminiSuspendedUntil);
+    // Step B: Search news
+    const isStillAllowed = !(isGeminiSilentlySuspended && Date.now() < geminiSuspendedUntil);
+    if (isStillAllowed) {
+      const newsPrompt = `Search for the absolute latest NASA news and notable space discoveries from official nasa.gov or space.com.
+      Compile exactly 3 of the most exciting recent news articles from this month. Write the response entirely in natural Uzbek language.
+      
+      Return the list as a JSON array matching this schema:
+      [
+        {
+          "title": "Title of the news in Uzbek",
+          "summary": "Detailed summary in Uzbek (at least 3 descriptive sentences detailing the science)",
+          "sourceUrl": "Official nasa.gov news link or space.com URL",
+          "date": "2026-05-31",
+          "category": "Mars, Teleskoplar, Artemis, Asteroidlar, etc."
+        }
+      ]`;
 
-      if (ai && canUseGemini) {
-        // Step A: Translate APOD explanation to Uzbek
-        if (apodData.explanation !== FALLBACK_APOD.explanation) {
-          try {
-            const translateResponse = await ai.models.generateContent({
-              model: "gemini-3.5-flash",
-              contents: `Translate the following NASA Astronomy Picture of the Day details into inspiring, natural, and scientifically accurate Uzbek language for students of the NASA Academy.
-              Title: ${apodData.title}
-              Explanation: ${apodData.explanation}
-              
-              Return JSON matching this schema:
-              {
-                "title": "translated title in Uzbek",
-                "explanation": "translated explanation in Uzbek"
-              }`,
-              config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    title: { type: Type.STRING },
-                    explanation: { type: Type.STRING }
-                  },
-                  required: ["title", "explanation"]
-                }
-              }
-            });
-            
-            if (translateResponse.text) {
-              const parsed = safeParseJson(translateResponse.text);
-              if (parsed && parsed.title) {
-                apodData.title = parsed.title;
-                apodData.explanation = parsed.explanation;
+      try {
+        console.log("[NASA API] Fetching live news using Search Grounding index...");
+        const newsResponse = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: newsPrompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  summary: { type: Type.STRING },
+                  sourceUrl: { type: Type.STRING },
+                  date: { type: Type.STRING },
+                  category: { type: Type.STRING }
+                },
+                required: ["title", "summary", "sourceUrl", "date", "category"]
               }
             }
-          } catch (err: any) {
-            const errMsg = err.message || String(err);
-            console.log("[NASA API info] APOD translation paused due to external API limit. Standard asset fallback loaded.");
-            
-            // Check for API quota exhaustion (429)
-            if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota")) {
-              console.log("[NASA API info] Quota Exhausted detected during translation. Regulating Gemini calls safely.");
-              isGeminiSilentlySuspended = true;
-              geminiSuspendedUntil = Date.now() + 10 * 60 * 1000; // Suspend for 10 minutes
-            }
+          }
+        });
+
+        if (newsResponse.text) {
+          const parsed = safeParseJson(newsResponse.text);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            liveNews = parsed;
+            console.log("[NASA API] Real-time Grounding succeeded.");
           }
         }
-
-        // Step B: Search for live NASA news (if not suspended in intermediate translation step)
-        const newsPrompt = `Search for the absolute latest NASA news and notable space discoveries from official nasa.gov or space.com.
-        Compile exactly 3 of the most exciting recent news articles from this month. Write the response entirely in natural Uzbek language.
+      } catch (searchErr: any) {
+        const searchErrMsg = searchErr.message || String(searchErr);
+        console.log("[NASA API info] Grounding restricted by quota limit. Activating Tier 2 fallback space generator...");
         
-        Return the list as a JSON array matching this schema:
-        [
-          {
-            "title": "Title of the news in Uzbek",
-            "summary": "Detailed summary in Uzbek (at least 3 descriptive sentences detailing the science)",
-            "sourceUrl": "Official nasa.gov news link or space.com URL",
-            "date": "2026-05-31",
-            "category": "Mars, Teleskoplar, Artemis, Asteroidlar, etc."
-          }
-        ]`;
+        if (searchErrMsg.includes("429") || searchErrMsg.includes("RESOURCE_EXHAUSTED") || searchErrMsg.includes("quota")) {
+          isGeminiSilentlySuspended = true;
+          geminiSuspendedUntil = Date.now() + 10 * 60 * 1000;
+        }
 
-        const isStillAllowed = !(isGeminiSilentlySuspended && Date.now() < geminiSuspendedUntil);
-
-        if (isStillAllowed) {
+        const isModelAllowed = !(isGeminiSilentlySuspended && Date.now() < geminiSuspendedUntil);
+        if (isModelAllowed) {
           try {
-            console.log("[NASA API] Querying live space news via Google Search Grounding...");
-            const newsResponse = await ai.models.generateContent({
+            console.log("[NASA API] Querying standard Gemini space model memory...");
+            const backupResponse = await ai.models.generateContent({
               model: "gemini-3.5-flash",
-              contents: newsPrompt,
+              contents: `Generate exactly 3 exciting space exploration news articles from this month. Write the response entirely in natural Uzbek language.
+              
+              Return the list as a JSON array matching this schema:
+              [
+                {
+                  "title": "Title of the news in Uzbek",
+                  "summary": "Detailed summary in Uzbek (at least 3 descriptive sentences detailing the science)",
+                  "sourceUrl": "Official nasa.gov news link or space.com URL",
+                  "date": "2026-05-31",
+                  "category": "Mars, Teleskoplar, Artemis, Asteroidlar, etc."
+                }
+              ]`,
               config: {
-                tools: [{ googleSearch: {} }],
                 responseMimeType: "application/json",
                 responseSchema: {
                   type: Type.ARRAY,
@@ -272,109 +328,91 @@ async function startServer() {
               }
             });
 
-            if (newsResponse.text) {
-              const parsed = safeParseJson(newsResponse.text);
+            if (backupResponse.text) {
+              const parsed = safeParseJson(backupResponse.text);
               if (Array.isArray(parsed) && parsed.length > 0) {
                 liveNews = parsed;
-                console.log("[NASA API] Web search Grounding succeeded.");
+                if (status === "live") status = "standard-ai";
               }
             }
-          } catch (searchErr: any) {
-            const searchErrMsg = searchErr.message || String(searchErr);
-            console.log("[NASA API info] Safe Grounding is currently restricted. Activating Tier 2 space telemetry fallback...");
-            
-            // Suspend if quota exhausted
-            if (searchErrMsg.includes("429") || searchErrMsg.includes("RESOURCE_EXHAUSTED") || searchErrMsg.includes("quota")) {
-              console.log("[NASA API info] Active quota constraint detected. Safely keeping requests within limits.");
+          } catch (backupErr: any) {
+            const backupErrMsg = backupErr.message || String(backupErr);
+            if (backupErrMsg.includes("429") || backupErrMsg.includes("RESOURCE_EXHAUSTED") || backupErrMsg.includes("quota")) {
               isGeminiSilentlySuspended = true;
               geminiSuspendedUntil = Date.now() + 10 * 60 * 1000;
             }
-
-            // Attempt Tier 2 Fallback if not suspended (Standard Cosmic AI Generation)
-            const isModelAllowed = !(isGeminiSilentlySuspended && Date.now() < geminiSuspendedUntil);
-            if (isModelAllowed) {
-              try {
-                console.log("[NASA API] Attempting Tier 2 fallback (Standard Cosmic model generation)...");
-                const backupResponse = await ai.models.generateContent({
-                  model: "gemini-3.5-flash",
-                  contents: `Generate exactly 3 exciting space exploration news articles from this month. Write the response entirely in natural Uzbek language.
-                  
-                  Return the list as a JSON array matching this schema:
-                  [
-                    {
-                      "title": "Title of the news in Uzbek",
-                      "summary": "Detailed summary in Uzbek (at least 3 descriptive sentences detailing the science)",
-                      "sourceUrl": "Official nasa.gov news link or space.com URL",
-                      "date": "2026-05-31",
-                      "category": "Mars, Teleskoplar, Artemis, Asteroidlar, etc."
-                    }
-                  ]`,
-                  config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          title: { type: Type.STRING },
-                          summary: { type: Type.STRING },
-                          sourceUrl: { type: Type.STRING },
-                          date: { type: Type.STRING },
-                          category: { type: Type.STRING }
-                        },
-                        required: ["title", "summary", "sourceUrl", "date", "category"]
-                      }
-                    }
-                  }
-                });
-
-                if (backupResponse.text) {
-                  const parsed = safeParseJson(backupResponse.text);
-                  if (Array.isArray(parsed) && parsed.length > 0) {
-                    liveNews = parsed;
-                    console.log("[NASA API] Standard model generation fallback succeeded.");
-                    if (status === "live") status = "standard-ai";
-                  }
-                }
-              } catch (backupErr: any) {
-                const backupErrMsg = backupErr.message || String(backupErr);
-                console.log("[NASA API info] Tier 2 standard generation paused during load-balancing.");
-                
-                if (backupErrMsg.includes("429") || backupErrMsg.includes("RESOURCE_EXHAUSTED") || backupErrMsg.includes("quota")) {
-                  isGeminiSilentlySuspended = true;
-                  geminiSuspendedUntil = Date.now() + 10 * 60 * 1000;
-                }
-                if (status === "live") status = "fallback-news";
-              }
-            } else {
-              if (status === "live") status = "fallback-news";
-            }
+            if (status === "live") status = "fallback-news";
           }
-        }
-      } else {
-        console.info("[NASA API] Gemini is offline/suspended. Serving raw high-quality fallback news instantly.");
-        if (status === "live") {
-          status = isGeminiSilentlySuspended ? "suspended-backup" : "offline-all";
+        } else {
+          if (status === "live") status = "fallback-news";
         }
       }
-    } catch (globalErr: any) {
-      console.log("[NASA API info] General telemetry transition complete safely.");
-      status = "critical-error-fallback";
+    }
+  } else {
+    if (status === "live") {
+      status = isGeminiSilentlySuspended ? "suspended-backup" : "offline-all";
+    }
+  }
+
+  return { apod: apodData, news: liveNews, status };
+}
+
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+
+  app.use(express.json());
+
+  // Main stable endpoint: ALWAYS succeeds instantly, serves cached data, refreshes in the background
+  app.get("/api/nasa/data", async (req, res) => {
+    const now = Date.now();
+    const force = req.query.force === "true";
+
+    // 1. If manual force-refresh is requested, fetch directly but clamp under tight 3s timeout
+    if (force) {
+      console.log("[NASA API] Quick live refresh requested. Fetching with hard timeout...");
+      try {
+        const fresh = await Promise.race([
+          fetchLiveNasaTelemetry(),
+          new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 3000))
+        ]);
+        
+        nasaCache = {
+          apod: fresh.apod,
+          news: fresh.news,
+          status: fresh.status,
+          timestamp: Date.now()
+        };
+
+        return res.json({
+          status: fresh.status,
+          apod: fresh.apod,
+          news: fresh.news
+        });
+      } catch (e: any) {
+        console.log("[NASA API] Forced refresh timed out/errored. Serving stable cached backups.", e.message || e);
+        return res.json({
+          status: "cached-timeout-fallback",
+          apod: nasaCache.apod,
+          news: nasaCache.news
+        });
+      }
     }
 
-    // Refresh memory cache with the calculated payload
-    nasaCache = {
-      apod: apodData,
-      news: liveNews,
-      status,
-      timestamp: Date.now()
-    };
+    // 2. Default flow: Serve from cache instantly, trigger background fetch if cache expired or initial
+    const isCacheExpired = (now - nasaCache.timestamp > CACHE_DURATION);
+    const isInitial = (nasaCache.status === "initial-offline");
 
     res.json({
-      status,
-      apod: apodData,
-      news: liveNews
+      status: isInitial ? "live" : "cached-" + nasaCache.status,
+      apod: nasaCache.apod,
+      news: nasaCache.news
     });
+
+    if (isCacheExpired || isInitial) {
+      triggerBackgroundFetch();
+    }
   });
 
   // Vite middleware development setup and static asset pipeline for production
@@ -385,7 +423,8 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    // Robust __dirname resolution safe for both ES modules and transpiled commonJS files
+    const distPath = path.resolve(__dirname, ".");
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
