@@ -3,7 +3,6 @@ import { Header } from './components/Header';
 import { LessonCard } from './components/LessonCard';
 import { LessonReader } from './components/LessonReader';
 import { QuizModule } from './components/QuizModule';
-import { NasaNews } from './components/NasaNews';
 import { LESSONS } from './data/lessons';
 import { UserProgress, Lesson } from './types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -168,10 +167,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* LIVE SPACE NEWS AND APOD REGION (NASA Original API integration) */}
-              <section className="pt-4">
-                <NasaNews theme={theme} onAddPoints={handleAddPoints} />
-              </section>
+
 
               {/* CURRICULUM ACADEMY SECTION */}
               <section className="space-y-8">
