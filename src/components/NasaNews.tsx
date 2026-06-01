@@ -102,7 +102,7 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
   }
 
   return (
-    <div className="space-y-12 mb-16" id="nasa-news-section">
+    <div className="space-y-8 mb-16" id="nasa-news-section">
       {/* Header and Controls */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-6 border-white/10">
         <div>
@@ -110,11 +110,11 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
             "text-3xl font-display font-bold flex items-center gap-2",
             isDark ? "text-white" : "text-slate-900"
           )}>
-            <Newspaper className="w-8 h-8 text-star-blue" />
-            NASA Live: Kun Yangiliklari
+            <Image className="w-8 h-8 text-star-blue" />
+            Kun Koinot Tasviri (APOD)
           </h2>
           <p className={isDark ? "text-slate-400 text-sm" : "text-slate-600 text-sm"}>
-            NASA rasmiy manbalaridan olingan eng so'nggi real kashfiyotlar va koinot rasmlari
+            NASA rasmiy observatoriyalaridan olingan har kunlik koinot fotosurati va ilmiy sharhi
           </p>
         </div>
 
@@ -127,7 +127,7 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
                 ? "bg-white/5 hover:bg-white/10 border-white/10 text-slate-300" 
                 : "bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700"
             )}
-            title="Yangiliklarni hozir yangilash"
+            title="Tasvirni hozir yangilash"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Yangilash
@@ -145,16 +145,16 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Daily Astronomy Picture Of The Day (APOD) - Takes 40% equivalent columns */}
+      <div className="max-w-4xl mx-auto">
+        {/* Daily Astronomy Picture Of The Day (APOD) - Beautifully Centered & Expanded */}
         <div className={cn(
-          "lg:col-span-5 rounded-2xl overflow-hidden shadow-xl border flex flex-col justify-between transition-all duration-300",
+          "rounded-2xl overflow-hidden shadow-2xl border flex flex-col justify-between transition-all duration-300",
           isDark ? "bg-space-900/60 border-white/10" : "bg-white border-slate-200"
         )}>
           <div className="p-6 border-b border-white/5 flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-star-blue font-bold">
-              <Image className="w-4 h-4" />
-              Kun Tasviri (APOD)
+              <Image className="w-4 h-4 animate-pulse" />
+              Bugungi kosmik telemetriya tasviri
             </span>
             <span className="text-xs text-slate-500 font-mono flex items-center gap-1">
               <Calendar className="w-3.5 h-3.5" />
@@ -162,26 +162,28 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
             </span>
           </div>
 
-          <div className="relative group overflow-hidden h-64">
+          <div className="relative group overflow-hidden bg-slate-950 flex items-center justify-center">
             <img 
               src={data.apod.url} 
               alt={data.apod.title}
-              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+              className="w-full max-h-[550px] object-contain transition-transform duration-700 hover:scale-102"
+              referrerPolicy="no-referrer"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
-            <div className="absolute bottom-4 left-4 right-4">
-              <h3 className="text-white text-lg font-display font-bold leading-tight line-clamp-2">
-                {data.apod.title}
-              </h3>
-            </div>
           </div>
 
-          <div className="p-6 flex-grow flex flex-col justify-between">
-            <div className="space-y-4">
+          <div className="p-8 space-y-6">
+            <div>
+              <h3 className={cn(
+                "text-2xl font-display font-bold leading-tight mb-4",
+                isDark ? "text-white" : "text-slate-900"
+              )}>
+                {data.apod.title}
+              </h3>
+              
               <button
                 onClick={() => setShowApodDetail(!showApodDetail)}
                 className={cn(
-                  "flex items-center gap-2 text-xs font-mono uppercase tracking-widest hover:text-star-blue transition-colors",
+                  "flex items-center gap-2 text-xs font-mono uppercase tracking-widest hover:text-star-blue transition-colors mb-3",
                   isDark ? "text-slate-400" : "text-slate-600"
                 )}
               >
@@ -189,15 +191,16 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
                 {showApodDetail ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
 
-              <AnimatePresence>
+              <AnimatePresence initial={false}>
                 {showApodDetail && (
                   <motion.p
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3 }}
                     className={cn(
-                      "text-sm leading-relaxed text-slate-400 scrollbar-thin overflow-y-auto max-h-48 pr-2",
-                      isDark ? "text-slate-400" : "text-slate-600"
+                      "text-sm leading-relaxed pr-2 mt-2",
+                      isDark ? "text-slate-300" : "text-slate-600"
                     )}
                   >
                     {data.apod.explanation}
@@ -206,94 +209,23 @@ export const NasaNews: React.FC<NasaNewsProps> = ({ theme, onAddPoints }) => {
               </AnimatePresence>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-white/5 flex gap-2">
+            <div className="pt-6 border-t border-white/5 flex gap-2">
               <a
                 href={data.apod.hdurl}
                 target="_blank"
                 rel="noreferrer"
                 className={cn(
-                  "w-full text-center py-2.5 rounded-lg text-xs font-mono uppercase tracking-wider transition-all duration-300 border flex items-center justify-center gap-1.5",
+                  "w-full text-center py-3 rounded-lg text-xs font-mono uppercase tracking-wider transition-all duration-300 border flex items-center justify-center gap-1.5",
                   isDark 
                     ? "bg-white/5 hover:bg-star-blue/15 border-white/10 text-slate-300 hover:text-star-blue hover:border-star-blue/40" 
                     : "bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700"
                 )}
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                Original HD Rasm
+                Original yuqori sifatli (HD) tasvirni ochish
               </a>
             </div>
           </div>
-        </div>
-
-        {/* Real-time Space News Articles list - Takes 60% equivalent columns */}
-        <div className="lg:col-span-7 space-y-6">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-xs font-mono uppercase tracking-widest text-slate-400 font-bold"> So'nggi Yangilik Tasmasi</span>
-            <div className="h-px bg-white/10 flex-grow" />
-          </div>
-
-          {data.news.map((item, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className={cn(
-                "p-6 rounded-2xl border transition-all duration-300 hover:shadow-lg flex flex-col md:flex-row justify-between gap-6",
-                isDark 
-                  ? "bg-space-900/50 hover:bg-space-900/85 border-white/5 hover:border-white/15" 
-                  : "bg-white border-slate-200 hover:border-slate-300 hover:shadow-slate-100"
-              )}
-            >
-              <div className="space-y-3 flex-grow max-w-xl">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className={cn(
-                    "px-2.5 py-0.5 rounded-md text-[10px] font-mono font-bold tracking-wider uppercase",
-                    isDark ? "bg-star-blue/15 text-star-blue" : "bg-indigo-50 text-indigo-700"
-                  )}>
-                    {item.category}
-                  </span>
-                  <span className="text-slate-500 font-mono text-[11px] flex items-center gap-1">
-                    <Calendar className="w-3 h-3" />
-                    {item.date}
-                  </span>
-                </div>
-
-                <h3 className={cn(
-                  "text-lg font-display font-bold leading-snug hover:text-star-blue transition-colors",
-                  isDark ? "text-white" : "text-slate-900"
-                )}>
-                  {item.title}
-                </h3>
-
-                <p className={cn(
-                  "text-sm leading-relaxed",
-                  isDark ? "text-slate-400" : "text-slate-600"
-                )}>
-                  {item.summary}
-                </p>
-              </div>
-
-              <div className="flex items-end shrink-0">
-                <a
-                  href={item.sourceUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  referrerPolicy="no-referrer"
-                  className={cn(
-                    "p-3 rounded-xl border transition-all self-end md:self-center flex items-center justify-center gap-1.5 md:p-4 text-xs font-mono uppercase tracking-wider",
-                    isDark 
-                      ? "bg-white/5 border-white/10 text-slate-300 hover:bg-star-blue/15 hover:border-star-blue/40 hover:text-star-blue" 
-                      : "bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200 hover:border-slate-300"
-                  )}
-                  title="NASA rasmiy maqolasini ochish"
-                >
-                  <span className="md:hidden">Batafsil o'qish</span>
-                  <ExternalLink className="w-4 h-4" />
-                </a>
-              </div>
-            </motion.div>
-          ))}
         </div>
       </div>
     </div>
