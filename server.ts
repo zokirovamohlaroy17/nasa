@@ -67,7 +67,7 @@ function httpsGet(url: string): Promise<any> {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json'
       },
-      timeout: 2500 // 2.5 seconds timeout to keep startup and interactions lightning-fast
+      timeout: 5000 // 5 seconds timeout to allow slow government servers to respond
     };
 
     const req = https.get(url, options, (res) => {
@@ -188,7 +188,7 @@ async function fetchLiveNasaTelemetry(): Promise<{ apod: typeof FALLBACK_APOD; n
   const canUseGemini = ai && !(isGeminiSilentlySuspended && now < geminiSuspendedUntil);
 
   if (ai && canUseGemini) {
-    // Step A: Translate APOD on the fly if it is new
+    // Step A: Translate APOD on the fly or fetch real-time data using search grounding if direct API failed
     if (apodData.explanation !== FALLBACK_APOD.explanation) {
       try {
         const translateResponse = await ai.models.generateContent({
@@ -227,6 +227,63 @@ async function fetchLiveNasaTelemetry(): Promise<{ apod: typeof FALLBACK_APOD; n
         console.log("[NASA API info] Translation paused due to rate limits. Swapping in standard space asset.");
         
         if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota")) {
+          isGeminiSilentlySuspended = true;
+          geminiSuspendedUntil = Date.now() + 10 * 60 * 1000;
+        }
+      }
+    } else {
+      // NASA APOD API failed due to typical rate limitations. Use search grounding to fetch today's actual APOD!
+      try {
+        console.log("[NASA API] Sourcing real Astronomy Picture of the Day via Gemini search grounding...");
+        const searchApodResponse = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: `Search Google for the absolute current or yesterday's NASA Astronomy Picture of the Day (APOD).
+          Get its direct media URL (hosted on apod.nasa.gov or related space image), its original date, its original title, and its explanation.
+          Then, translate both the title and explanation into inspiring, scientifically accurate, and natural Uzbek language for the NASA Academy.
+          
+          Return strictly a JSON object matching this schema:
+          {
+            "title": "Title in Uzbek",
+            "explanation": "Explanation in Uzbek",
+            "url": "Direct image URL (highly accurate apod.nasa.gov image pathway)",
+            "hdurl": "Direct high quality image URL",
+            "date": "YYYY-MM-DD"
+          }`,
+          config: {
+            tools: [{ googleSearch: {} }],
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                explanation: { type: Type.STRING },
+                url: { type: Type.STRING },
+                hdurl: { type: Type.STRING },
+                date: { type: Type.STRING }
+              },
+              required: ["title", "explanation", "url", "hdurl", "date"]
+            }
+          }
+        });
+
+        if (searchApodResponse.text) {
+          const parsed = safeParseJson(searchApodResponse.text);
+          if (parsed && parsed.title && parsed.url && parsed.url.startsWith("http")) {
+            apodData = {
+              title: parsed.title,
+              explanation: parsed.explanation,
+              url: parsed.url,
+              hdurl: parsed.hdurl || parsed.url,
+              date: parsed.date
+            };
+            console.log("[NASA API] Sourced and translated real-time APOD successfully via Web Grounding.");
+            if (status === "fallback-apod") status = "live-gemini-apod";
+          }
+        }
+      } catch (searchApodErr: any) {
+        const searchApodErrMsg = searchApodErr.message || String(searchApodErr);
+        console.log("[NASA API info] Grounded APOD sourcing paused due to limits:", searchApodErrMsg);
+        if (searchApodErrMsg.includes("429") || searchApodErrMsg.includes("RESOURCE_EXHAUSTED") || searchApodErrMsg.includes("quota")) {
           isGeminiSilentlySuspended = true;
           geminiSuspendedUntil = Date.now() + 10 * 60 * 1000;
         }
